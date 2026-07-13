@@ -35,8 +35,25 @@ async function renderBacklog(body) {
     api("/review/merchants?limit=150"), api("/periods"),
   ]);
   const worst = periods.filter((p) => p.to_review > 0).slice(0, 6);
+  const aiStatus = el("span", { class: "muted" });
+  const aiBtn = el("button", { class: "ghost", onclick: runClassifier }, "Suggest categories (AI)");
+  async function runClassifier() {
+    const st = await api("/classify/status");
+    if (!st.configured) { aiStatus.textContent = "set ANTHROPIC_API_KEY to enable"; return; }
+    aiBtn.disabled = true; aiStatus.textContent = `classifying with ${st.model}…`;
+    try {
+      const r = await api("/classify/run", { method: "POST", body: { budget: 100 } });
+      aiStatus.textContent = r.error
+        ? r.error
+        : `auto-applied ${r.auto_applied}, held ${r.held_for_review} for review (of ${r.descriptors} merchants)`;
+      window.dispatchEvent(new CustomEvent("data-changed"));
+      renderBacklog(body);   // refresh with proposals attached
+    } catch (e) { aiStatus.textContent = e.message; } finally { aiBtn.disabled = false; }
+  }
   body.append(el("div", { class: "card" },
-    el("h3", {}, `Backlog — ${total_groups} merchants to decide`),
+    el("div", { class: "toolbar" },
+      el("h3", { style: "margin:0" }, `Backlog — ${total_groups} merchants to decide`),
+      el("span", { class: "spacer" }), aiBtn, aiStatus),
     el("div", { class: "muted", html: worst.length
       ? "Worst periods: " + worst.map((p) => `${p.period} (${p.to_review}, ${money(p.review_pennies)})`).join(" · ")
       : "Nothing left to review 🎉" })));

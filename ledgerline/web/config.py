@@ -17,6 +17,7 @@ class Settings:
     # Cookie-signing key; ephemeral per process unless pinned (logs everyone out on restart).
     secret_key: str = os.environ.get("LEDGERLINE_SECRET") or secrets.token_hex(16)
     anthropic_api_key: str | None = os.environ.get("ANTHROPIC_API_KEY") or None
+    classifier_model: str = os.environ.get("LEDGERLINE_CLASSIFIER_MODEL", "claude-opus-4-8")
     session_max_age: int = 60 * 60 * 24 * 14  # 14 days
 
 

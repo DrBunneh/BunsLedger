@@ -26,10 +26,11 @@ def create_app() -> FastAPI:
     from .api import system
     app.include_router(system.router)
     # Later WPs register their routers here:
-    from .api import ingest, transactions, reports
+    from .api import ingest, transactions, reports, classify
     app.include_router(ingest.router)
     app.include_router(transactions.router)
     app.include_router(reports.router)
+    app.include_router(classify.router)
 
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
     return app

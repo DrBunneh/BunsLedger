@@ -84,6 +84,36 @@ def test_import_is_idempotent():
     assert counts["new"] == 0 and counts["dup"] == 7
 
 
+def test_classifier_enum_and_apply_offline():
+    from ledgerline.enrich import classifier
+    conn = _loaded_conn()
+    from ledgerline.categorise import categorise
+    categorise(conn)
+    enum = classifier.build_enum(conn)
+    assert "Groceries" in enum and classifier.SENTINEL in enum
+    assert "Eating out ▸ Restaurants" in enum
+
+    def fake(payload, e):  # offline model: everything is a mystery -> sentinel, held
+        return {"merchant": "X", "category_path": classifier.SENTINEL, "confidence": 0.2,
+                "rationale": "unclear", "searched": False,
+                "looks_like_transfer": False, "needs_human": True}
+    res = classifier.run(conn, api_key=None, classify_fn=fake)
+    # sentinel + low confidence => nothing auto-applied, category stays NULL, directory cached
+    assert res["auto_applied"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM merchant_directory").fetchone()[0] > 0
+    mystery = conn.execute(
+        "SELECT category, needs_review FROM transactions WHERE description_raw=?",
+        ("Mystery Merchant XYZ",)).fetchone()
+    assert mystery["category"] is None and mystery["needs_review"] == 1
+
+
+def test_classifier_no_api_key_is_graceful():
+    from ledgerline.enrich import classifier
+    conn = _loaded_conn()
+    res = classifier.run(conn, api_key=None)   # no key, no injected fn
+    assert "error" in res and res["applied"] == 0
+
+
 def test_categorise_cascade():
     conn = _loaded_conn()
     categorise(conn)
