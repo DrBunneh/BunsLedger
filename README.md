@@ -23,9 +23,11 @@ a large history** of miscategorised or uncategorised transactions with rules you
 | Deterministic ids / dedup | ✅ re-import idempotent; same-day repeats survive |
 | Transfer detection (pattern-based) | ✅ conservative v1 |
 | Categorisation cascade | ✅ transfers → manual → rule → source_map → review |
-| Guided period review | ⏳ next |
-| LLM auto-classifier (§6.3) | ⏳ deferred until the real uncategorised tail is measured |
-| Insights / projections | ⏳ later |
+| Guided period review | ✅ merchant-grouped backlog + sign-off (web UI) |
+| LLM auto-classifier (§6.3) | ✅ enum-constrained + web-search; needs `ANTHROPIC_API_KEY` to run |
+| Insights / projections | ✅ cashflow, category, recurring (projections TBD) |
+| Local web app (upload UI, review table, dashboard) | ✅ FastAPI + SPA; `ledgerline serve` / `app` |
+| Monzo forward-sync | ✅ code-complete; needs a Monzo app (client id/secret) to connect |
 
 On the sample data, first-pass categorisation reaches **~74% of spendable transactions**
 automatically; the remainder is concentrated in Monzo's `general`/blank bucket, which the

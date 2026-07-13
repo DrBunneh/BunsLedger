@@ -178,3 +178,16 @@ CREATE TABLE IF NOT EXISTS period_review (
     reviewed_at               TEXT,
     notes                     TEXT
 );
+
+-- Monzo OAuth state + forward-sync cursor (single-user, local-only; DB is git-ignored).
+CREATE TABLE IF NOT EXISTS monzo_auth (
+    id            INTEGER PRIMARY KEY CHECK (id = 1),   -- single row
+    access_token  TEXT,
+    refresh_token TEXT,
+    expires_at    TEXT,          -- ISO; when the access token expires
+    account_id    TEXT,          -- the Monzo account we sync
+    user_id       TEXT,
+    cursor        TEXT,          -- last synced transaction id (forward-sync watermark)
+    last_sync_at  TEXT,
+    updated_at    TEXT
+);

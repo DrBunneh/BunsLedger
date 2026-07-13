@@ -107,6 +107,23 @@ def test_classifier_enum_and_apply_offline():
     assert mystery["category"] is None and mystery["needs_review"] == 1
 
 
+def test_monzo_api_mapping():
+    from ledgerline.monzo import sync
+    from ledgerline.dedup import txn_id
+    t = {"id": "tx_ABC", "created": "2026-07-12T09:15:00Z", "description": "TFL",
+         "amount": -275, "currency": "GBP", "merchant": {"name": "Transport for London"},
+         "category": "transport", "settled": "2026-07-13T00:00:00Z"}
+    c = sync.map_transaction(t)
+    assert c.amount_pennies == -275          # API amounts are already signed pennies
+    assert c.source_id == "tx_ABC" and c.status == "posted"
+    assert c.description_extra == "Transport for London"
+    assert sync.map_transaction({**t, "id": "tx_2", "settled": ""}).status == "pending"
+    assert sync.map_transaction({**t, "id": "tx_3", "decline_reason": "X"}).status == "declined"
+    assert sync.map_transaction({"id": "tx_4", "created": "2026-01-01"}) is None  # no amount
+    # dedup keys off the native tx id
+    assert txn_id(c) == txn_id(sync.map_transaction(t))
+
+
 def test_classifier_no_api_key_is_graceful():
     from ledgerline.enrich import classifier
     conn = _loaded_conn()

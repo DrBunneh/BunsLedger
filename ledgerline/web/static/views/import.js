@@ -81,9 +81,44 @@ export async function render(app) {
     t.append(tb); statusCard.append(t);
   }
 
+  const monzoCard = el("div", { class: "card" });
+  async function loadMonzo() {
+    const s = await api("/monzo/status");
+    monzoCard.innerHTML = "";
+    monzoCard.append(el("h3", {}, "Monzo automatic sync"));
+    if (!s.configured) {
+      monzoCard.append(el("p", { class: "muted" },
+        "Set MONZO_CLIENT_ID and MONZO_CLIENT_SECRET (register an app at developers.monzo.com) to enable forward-sync of new transactions. History stays CSV-driven."));
+      return;
+    }
+    const msg = el("span", { class: "muted" });
+    if (!s.connected) {
+      monzoCard.append(el("div", { class: "toolbar" },
+        el("button", { onclick: async () => {
+          const r = await api("/monzo/connect");
+          window.open(r.authorize_url, "_blank");
+          msg.textContent = "Approve in the Monzo app, then click Sync.";
+        }}, "Connect Monzo"), msg));
+    } else {
+      monzoCard.append(el("div", { class: "toolbar" },
+        el("button", { onclick: async () => {
+          msg.textContent = "syncing…";
+          try {
+            const r = await api("/monzo/sync", { method: "POST" });
+            msg.textContent = `fetched ${r.fetched}, ${r.new} new`;
+            window.dispatchEvent(new CustomEvent("data-changed"));
+            loadStatus();
+          } catch (e) { msg.textContent = e.message; }
+        }}, "Sync now"),
+        el("span", { class: "muted" }, `last sync: ${s.last_sync_at ? s.last_sync_at.slice(0, 16).replace("T", " ") : "never"}`),
+        msg));
+    }
+  }
+
   app.append(
     el("div", { class: "card" }, el("h2", {}, "Import"), zone, input),
-    results, statusCard,
+    results, statusCard, monzoCard,
   );
   loadStatus();
+  loadMonzo();
 }
