@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ledgerline"
+version = "0.1.0"
+description = "Local-first personal finance ingestion, categorisation and analysis (Monzo, Nationwide, Aqua)."
+requires-python = ">=3.10"
+dependencies = [
+    "pymupdf>=1.23",   # PDF text + word coordinates (Nationwide positional, Aqua)
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.scripts]
+ledgerline = "ledgerline.cli:main"
+
+[tool.setuptools]
+packages = ["ledgerline", "ledgerline.parsers"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

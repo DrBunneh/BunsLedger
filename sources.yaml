@@ -1,0 +1,36 @@
+# Source registry. Detection is content-based, not filename-based (both statements
+# are PDFs; exports get renamed). Adding a fourth bank = one entry + one parser.
+sources:
+  monzo:
+    institution: Monzo
+    detect:
+      type: csv
+      header_equals: [id, created, title, subtitle, amount, currency, categories]
+    parser: monzo_csv
+    sign_convention: signed            # negative already = money out
+
+  nationwide:
+    institution: Nationwide
+    detect:
+      type: pdf
+      content_marker: "FlexDirect"     # also: sort code 07-02-46
+    parser: nationwide_pdf
+    sign_convention: out_in_columns    # positional: £Out => negative, £In => positive
+    notes: >
+      Positional extraction required. In linear text the £Out / £In / £Balance
+      columns all collapse to bare numbers on their own lines and are only
+      distinguishable by x-coordinate. Year sits on a header row; carry it down
+      and handle Dec->Jan rollover. Reconcile Out/In against the printed balance.
+
+  aqua:
+    institution: Aqua (NewDay)
+    detect:
+      type: pdf
+      content_marker: "aquacard.co.uk"
+    parser: aqua_pdf
+    sign_convention: credit_card       # displayed '+' = spend => negative; 'Payment Received' => positive
+    notes: >
+      Transactions sit on pages 2-4 between 'Your account in detail' and 'Your new
+      balance'. Foreign rows carry a trailing 'Currency conversion rate 15.00 USD
+      @ 1.3464' line (period OR European-comma decimal; USD/EUR) to attach to the
+      row above.
