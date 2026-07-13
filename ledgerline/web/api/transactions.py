@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from ... import counterparties
+from ...categorise import categorise as run_categorise
 from ...normalise import normalise_descriptor
 from ..auth import require_session
 from ..deps import get_conn
@@ -76,7 +77,53 @@ def categories(_: None = Depends(require_session), conn=Depends(get_conn)) -> di
             "kinds": {r["name"]: r["kind"] for r in rows}, "paths": paths}
 
 
+class CategoryBody(BaseModel):
+    name: str
+    parent: str | None = None
+    kind: str = "spend"     # income | spend | transfer
+
+
+@router.post("/categories")
+def add_category(body: CategoryBody, _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    name = body.name.strip()
+    if not name:
+        raise HTTPException(400, "name required")
+    if body.kind not in ("income", "spend", "transfer"):
+        raise HTTPException(400, "kind must be income|spend|transfer")
+    if body.parent and conn.execute("SELECT 1 FROM categories WHERE name=?", (body.parent,)).fetchone() is None:
+        raise HTTPException(400, f"parent '{body.parent}' does not exist")
+    if conn.execute("SELECT 1 FROM categories WHERE name=?", (name,)).fetchone():
+        raise HTTPException(409, f"category '{name}' already exists (names are unique)")
+    # a child inherits its parent's kind
+    kind = conn.execute("SELECT kind FROM categories WHERE name=?", (body.parent,)).fetchone()["kind"] \
+        if body.parent else body.kind
+    conn.execute("INSERT INTO categories (name, parent, kind) VALUES (?,?,?)", (name, body.parent, kind))
+    conn.commit()
+    return {"ok": True, "name": name, "parent": body.parent, "kind": kind}
+
+
+@router.delete("/categories/{name}")
+def delete_category(name: str, _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    if conn.execute("SELECT 1 FROM categories WHERE parent=?", (name,)).fetchone():
+        raise HTTPException(400, "delete or move its subcategories first")
+    used = conn.execute(
+        "SELECT COUNT(*) FROM transactions WHERE category=? OR subcategory=?", (name, name)).fetchone()[0]
+    if used:
+        raise HTTPException(400, f"{used} transactions still use '{name}' — recategorise them first")
+    conn.execute("DELETE FROM merchant_rules WHERE category=? OR subcategory=?", (name, name))
+    conn.execute("DELETE FROM categories WHERE name=?", (name,))
+    conn.commit()
+    return {"ok": True}
+
+
 # ------------------------------------------------------------------ merchant review
+@router.post("/categorise")
+def recategorise(_: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    """Re-flow the cascade over stored data after editing rules/categories.
+    Only re-touches rule/auto/uncategorised rows — manual decisions stay put."""
+    return run_categorise(conn)
+
+
 @router.get("/review/merchants")
 def review_merchants(_: None = Depends(require_session), conn=Depends(get_conn),
                      limit: int = 100) -> dict:
@@ -118,6 +165,7 @@ class ApplyBody(BaseModel):
     is_transfer: bool | None = None
     counts_as_spend: bool | None = None
     tags: list[str] | None = None
+    note: str | None = None             # your explanation of what this is (persists; feeds the AI)
     create_rule: bool = False
     retro_apply: bool = False           # apply across ALL history, not just the backlog
 
@@ -136,34 +184,46 @@ def _resolve_ids(conn, body: ApplyBody) -> list[str]:
 @router.post("/review/apply")
 def apply_decision(body: ApplyBody, _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
     ids = _resolve_ids(conn, body)
-    if not ids:
-        return {"updated": 0, "rule_created": False}
     cid = counterparties.get_or_create(conn, body.counterparty) if body.counterparty else None
-    qmarks = ",".join("?" * len(ids))
-    sets = ["categorised_by='manual'", "needs_review=0", "updated_at=datetime('now')"]
-    vals: list = []
-    for col, val in [("category", body.category), ("subcategory", body.subcategory),
-                     ("merchant", body.merchant), ("is_transfer", int(body.is_transfer) if body.is_transfer is not None else None),
-                     ("counts_as_spend", int(body.counts_as_spend) if body.counts_as_spend is not None else None),
-                     ("counterparty_id", cid)]:
-        if val is not None:
-            sets.append(f"{col}=?"); vals.append(val)
-    updated = conn.execute(
-        f"UPDATE transactions SET {', '.join(sets)} WHERE txn_id IN ({qmarks})", vals + ids
-    ).rowcount
+    updated = 0
+    if ids:                                   # apply to matching transactions (may be none yet)
+        qmarks = ",".join("?" * len(ids))
+        sets = ["categorised_by='manual'", "needs_review=0", "updated_at=datetime('now')"]
+        vals: list = []
+        for col, val in [("category", body.category), ("subcategory", body.subcategory),
+                         ("merchant", body.merchant), ("is_transfer", int(body.is_transfer) if body.is_transfer is not None else None),
+                         ("counts_as_spend", int(body.counts_as_spend) if body.counts_as_spend is not None else None),
+                         ("counterparty_id", cid)]:
+            if val is not None:
+                sets.append(f"{col}=?"); vals.append(val)
+        updated = conn.execute(
+            f"UPDATE transactions SET {', '.join(sets)} WHERE txn_id IN ({qmarks})", vals + ids).rowcount
+        if body.tags:
+            for tag in body.tags:
+                tid = conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,)).lastrowid \
+                      or conn.execute("SELECT id FROM tags WHERE name=?", (tag,)).fetchone()[0]
+                conn.executemany("INSERT OR IGNORE INTO transaction_tags (txn_id, tag_id) VALUES (?,?)",
+                                 [(i, tid) for i in ids])
+        if body.note:
+            conn.execute(f"UPDATE transactions SET notes=? WHERE txn_id IN ({qmarks})", [body.note] + ids)
 
-    if body.tags:
-        for tag in body.tags:
-            tid = conn.execute("INSERT OR IGNORE INTO tags (name) VALUES (?)", (tag,)).lastrowid \
-                  or conn.execute("SELECT id FROM tags WHERE name=?", (tag,)).fetchone()[0]
-            conn.executemany("INSERT OR IGNORE INTO transaction_tags (txn_id, tag_id) VALUES (?,?)",
-                             [(i, tid) for i in ids])
+    # Remember this merchant + your explanation so it's never re-asked and can feed the AI.
+    if body.descriptor:
+        conn.execute(
+            "INSERT INTO merchant_directory (raw_pattern, merchant, category, subcategory, status, "
+            " source, confidence, rationale, notes, resolved_at) "
+            "VALUES (?,?,?,?, 'approved', 'manual', 1.0, ?, ?, datetime('now')) "
+            "ON CONFLICT(raw_pattern) DO UPDATE SET merchant=excluded.merchant, category=excluded.category, "
+            " subcategory=excluded.subcategory, status='approved', source='manual', notes=excluded.notes, "
+            " resolved_at=excluded.resolved_at",
+            (body.descriptor, body.merchant, body.category, body.subcategory, body.note, body.note),
+        )
 
     rule_created = False
     if body.create_rule and body.descriptor and body.category:
         conn.execute(
-            "INSERT INTO merchant_rules (match_type, pattern, merchant, category, subcategory, priority) "
-            "VALUES ('contains', ?, ?, ?, ?, 100)",
+            "INSERT INTO merchant_rules (match_type, pattern, merchant, category, subcategory, priority, origin) "
+            "VALUES ('contains', ?, ?, ?, ?, 100, 'user')",
             (body.descriptor, body.merchant, body.category, body.subcategory),
         )
         rule_created = True

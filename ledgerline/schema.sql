@@ -113,7 +113,8 @@ CREATE TABLE IF NOT EXISTS merchant_rules (
     merchant    TEXT,
     category    TEXT REFERENCES categories(name),
     subcategory TEXT REFERENCES categories(name),
-    priority    INTEGER NOT NULL DEFAULT 100
+    priority    INTEGER NOT NULL DEFAULT 100,
+    origin      TEXT NOT NULL DEFAULT 'user'   -- 'seed' (reloadable) | 'user' (yours, preserved)
 );
 
 CREATE TABLE IF NOT EXISTS merchant_directory (

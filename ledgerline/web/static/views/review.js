@@ -11,7 +11,7 @@ const catSelect = (value) => {
 const splitPath = (p) => p.includes(" ▸ ") ? p.split(" ▸ ") : [p, null];
 
 export async function render(app) {
-  if (!CATS) CATS = await api("/categories");
+  CATS = await api("/categories");          // always fresh — you may have edited the taxonomy
   const body = el("div");
   const toolbar = el("div", { class: "toolbar" },
     el("button", { class: "mode", onclick: () => show("backlog") }, "Backlog by merchant"),
@@ -36,6 +36,14 @@ async function renderBacklog(body) {
   ]);
   const worst = periods.filter((p) => p.to_review > 0).slice(0, 6);
   const aiStatus = el("span", { class: "muted" });
+  const reapplyBtn = el("button", { class: "ghost", title: "re-flow rules over all history (manual decisions preserved)",
+    onclick: async () => {
+      aiStatus.textContent = "re-applying rules…";
+      const r = await api("/categorise", { method: "POST" });
+      aiStatus.textContent = `rules ${r.rules}, transfers ${r.transfers}, map ${r.source_map}, ${r.needs_review} still to review`;
+      window.dispatchEvent(new CustomEvent("data-changed"));
+      renderBacklog(body);
+    } }, "Re-apply rules");
   const aiBtn = el("button", { class: "ghost", onclick: runClassifier }, "Suggest categories (AI)");
   async function runClassifier() {
     const st = await api("/classify/status");
@@ -53,7 +61,7 @@ async function renderBacklog(body) {
   body.append(el("div", { class: "card" },
     el("div", { class: "toolbar" },
       el("h3", { style: "margin:0" }, `Backlog — ${total_groups} merchants to decide`),
-      el("span", { class: "spacer" }), aiBtn, aiStatus),
+      el("span", { class: "spacer" }), reapplyBtn, aiBtn, aiStatus),
     el("div", { class: "muted", html: worst.length
       ? "Worst periods: " + worst.map((p) => `${p.period} (${p.to_review}, ${money(p.review_pennies)})`).join(" · ")
       : "Nothing left to review 🎉" })));
@@ -63,9 +71,23 @@ async function renderBacklog(body) {
   for (const g of groups) list.append(groupCard(g, list));
 }
 
+async function addCategoryInline(sel) {
+  const name = prompt("New category name (e.g. Crypto, or a subtype like Travel):");
+  if (!name || !name.trim()) return;
+  const parent = prompt("Parent category for a subtype (leave blank for a top-level category):") || null;
+  try {
+    await api("/categories", { method: "POST", body: { name: name.trim(), parent: parent && parent.trim() || null } });
+    CATS = await api("/categories");
+    const path = parent && parent.trim() ? `${parent.trim()} ▸ ${name.trim()}` : name.trim();
+    sel.append(el("option", { value: path, selected: "" }, path));  // add + select on this card
+    window.dispatchEvent(new CustomEvent("cats-changed"));
+  } catch (e) { alert(e.message); }
+}
+
 function groupCard(g, list) {
   const sel = catSelect(g.proposal);
-  const merchant = el("input", { type: "text", value: g.descriptor, style: "min-width:200px" });
+  const merchant = el("input", { type: "text", value: g.descriptor, style: "min-width:180px" });
+  const note = el("input", { type: "text", placeholder: "what is this? (remembered, feeds the AI)", style: "min-width:260px" });
   const ruleBox = el("input", { type: "checkbox", checked: "" });
   const retroBox = el("input", { type: "checkbox", checked: "" });
   const status = el("span", { class: "muted" });
@@ -78,6 +100,7 @@ function groupCard(g, list) {
       const res = await api("/review/apply", { method: "POST", body: {
         descriptor: g.descriptor, category, subcategory,
         merchant: asTransfer ? null : merchant.value,
+        note: note.value || undefined,
         is_transfer: asTransfer ? true : undefined,
         create_rule: !asTransfer && ruleBox.checked,
         retro_apply: retroBox.checked,
@@ -101,8 +124,12 @@ function groupCard(g, list) {
     el("div", { class: "toolbar" },
       el("label", { class: "muted" }, "Merchant "), merchant,
       el("label", { class: "muted" }, "Category "), sel,
+      el("button", { class: "ghost", style: "padding:6px 10px",
+        title: "create a category that doesn't exist yet",
+        onclick: () => addCategoryInline(sel) }, "+ new"),
       el("label", { class: "muted" }, ruleBox, " rule"),
-      el("label", { class: "muted" }, retroBox, " all history"),
+      el("label", { class: "muted" }, retroBox, " all history")),
+    el("div", { class: "toolbar" }, el("label", { class: "muted" }, "Note "), note,
       el("button", { onclick: () => apply(false) }, "Apply"),
       el("button", { class: "ghost", onclick: () => apply(true) }, "Mark transfer"),
       status,

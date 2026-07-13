@@ -6,6 +6,7 @@ const views = {
   import: () => import("./views/import.js"),
   review: () => import("./views/review.js"),
   reports: () => import("./views/reports.js"),
+  categories: () => import("./views/categories.js"),
 };
 
 const $ = (id) => document.getElementById(id);

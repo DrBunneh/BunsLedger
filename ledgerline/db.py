@@ -30,7 +30,19 @@ def connect(path: str | Path) -> sqlite3.Connection:
 
 def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(SCHEMA_PATH.read_text())
+    _migrate(conn)
     conn.commit()
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Idempotent column additions for DBs created before a column existed
+    (CREATE TABLE IF NOT EXISTS won't add columns to an existing table)."""
+    cols = {r["name"] for r in conn.execute("PRAGMA table_info(merchant_rules)").fetchall()}
+    if "origin" not in cols:
+        conn.execute("ALTER TABLE merchant_rules ADD COLUMN origin TEXT NOT NULL DEFAULT 'user'")
+        # Rows predating this column were all seed-managed (user rules couldn't survive the
+        # old wipe-on-restart), so mark them 'seed' — reseed replaces them cleanly.
+        conn.execute("UPDATE merchant_rules SET origin='seed'")
 
 
 def upsert_transactions(conn: sqlite3.Connection, txns: list[CanonicalTxn]) -> dict:

@@ -133,8 +133,31 @@ def _web_search_tool(model: str) -> dict:
     return {"type": "web_search_20250305", "name": "web_search", "max_uses": 2}
 
 
+def user_context(conn, limit: int = 30) -> str:
+    """How the user categorises things, in their words — your rules and explained
+    merchants. Injected so the model mimics your taxonomy/style instead of guessing blind."""
+    lines: list[str] = []
+    for r in conn.execute(
+        "SELECT pattern, category, subcategory FROM merchant_rules WHERE origin='user' "
+        "ORDER BY id DESC LIMIT ?", (limit,)).fetchall():
+        path = f"{r['category']} ▸ {r['subcategory']}" if r["subcategory"] else r["category"]
+        lines.append(f"- \"{r['pattern']}\" -> {path}")
+    for r in conn.execute(
+        "SELECT raw_pattern, category, subcategory, notes FROM merchant_directory "
+        "WHERE source='manual' AND category IS NOT NULL ORDER BY resolved_at DESC LIMIT ?",
+        (limit,)).fetchall():
+        path = f"{r['category']} ▸ {r['subcategory']}" if r["subcategory"] else r["category"]
+        note = f"  ({r['notes']})" if r["notes"] else ""
+        lines.append(f"- \"{r['raw_pattern']}\" -> {path}{note}")
+    if not lines:
+        return ""
+    return ("\n\nThe user has already categorised these merchants — follow the SAME taxonomy and "
+            "style, and prefer a category consistent with these when a line is similar:\n"
+            + "\n".join(lines[:limit]))
+
+
 def anthropic_classify(payload: dict, enum: list[str], *, model: str, api_key: str,
-                       allow_search: bool = True) -> dict:
+                       allow_search: bool = True, context: str = "") -> dict:
     """One model call for one descriptor. Returns the validated submit_classification input."""
     import anthropic
 
@@ -151,7 +174,7 @@ def anthropic_classify(payload: dict, enum: list[str], *, model: str, api_key: s
         resp = client.messages.create(
             model=model, max_tokens=1024,
             output_config={"effort": "low"},
-            system=_SYSTEM % "\n".join(enum),
+            system=(_SYSTEM % "\n".join(enum)) + context,
             tools=tools, tool_choice=tool_choice, messages=messages,
         )
         for block in resp.content:
@@ -179,8 +202,9 @@ def run(conn, *, api_key: str | None, model: str = "claude-opus-4-8",
         if not api_key:
             return {"error": "ANTHROPIC_API_KEY not set", "descriptors": len(payloads),
                     "applied": 0, "auto_applied": 0, "held_for_review": 0}
+        ctx = user_context(conn)          # your rules + explanations, fed to the model
         classify_fn = lambda p, e: anthropic_classify(p, e, model=model, api_key=api_key,
-                                                       allow_search=allow_search)
+                                                       allow_search=allow_search, context=ctx)
 
     applied = auto = held = failed = 0
     for p in payloads:

@@ -26,11 +26,12 @@ def seed(conn) -> None:
         "VALUES (?,?,?,?,?,?)",
         s.CATEGORY_MAP,
     )
-    # Rules: clear and reload so edits to the seed file take effect on re-seed.
-    conn.execute("DELETE FROM merchant_rules WHERE id IN (SELECT id FROM merchant_rules)")
+    # Reload ONLY seed rules so seed-file edits take effect; user-created rules
+    # (origin='user') are never touched. This is the fix for rules vanishing on restart.
+    conn.execute("DELETE FROM merchant_rules WHERE origin='seed'")
     conn.executemany(
-        "INSERT INTO merchant_rules (match_type, pattern, merchant, category, subcategory, priority) "
-        "VALUES (?,?,?,?,?,?)",
+        "INSERT INTO merchant_rules (match_type, pattern, merchant, category, subcategory, priority, origin) "
+        "VALUES (?,?,?,?,?,?, 'seed')",
         s.MERCHANT_RULES,
     )
     conn.commit()

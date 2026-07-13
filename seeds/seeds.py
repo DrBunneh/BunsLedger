@@ -45,6 +45,15 @@ CATEGORIES = [
     ("Entertainment", None, "spend"),
     ("Health", None, "spend"),
     ("Pets", None, "spend"),
+    ("Crypto", None, "spend"),                       # Coinbase etc. (asset purchase)
+    # Trading-card hobby, sliced by what the spend was for (Travel/Accom/Food/Supplies/Cards).
+    # NB: subcategory names are globally unique, so the card-purchase leaf is "Card purchases".
+    ("Cards", None, "spend"),
+    ("Travel", "Cards", "spend"),
+    ("Accommodation", "Cards", "spend"),
+    ("Food", "Cards", "spend"),
+    ("Supplies", "Cards", "spend"),
+    ("Card purchases", "Cards", "spend"),
     ("Fees & Interest", None, "spend"),
     ("Transfers", None, "transfer"),
 ]
@@ -88,9 +97,12 @@ MERCHANT_RULES = [
     ("contains", "mortgage a/c", "Mortgage", "Housing", "Mortgage", 90),
     ("contains", "LV LIFE", "LV=", "Insurance", "Life", 100),
     ("contains", "ANIMAL HEALTH CARE", "Animal Health Care", "Pets", None, 100),
-    ("contains", "CARDMARKET", "Cardmarket", "Hobbies", "Trading cards", 100),
-    ("contains", "FANFINITY", "Fanfinity", "Hobbies", "Trading cards", 100),
-    ("contains", "DRAKKAR LUDIK", "Drakkar Ludik", "Hobbies", "Trading cards", 100),
+    ("contains", "CARDMARKET", "Cardmarket", "Cards", "Card purchases", 100),
+    ("contains", "FANFINITY", "Fanfinity", "Cards", "Card purchases", 100),
+    ("contains", "DRAKKAR LUDIK", "Drakkar Ludik", "Cards", "Card purchases", 100),
+    ("contains", "LORCAN", "Lorcan", "Cards", "Card purchases", 100),
+    ("contains", "COINBASE", "Coinbase", "Crypto", None, 100),
+    ("contains", "CB PAYMENTS", "Coinbase", "Crypto", None, 100),
     ("contains", "EBAY", "eBay", "Shopping", "Marketplace", 100),
     ("contains", "Interest added", "Interest", "Income", "Interest", 100),
 ]
