@@ -124,6 +124,27 @@ def test_monzo_api_mapping():
     assert txn_id(c) == txn_id(sync.map_transaction(t))
 
 
+def test_similar_matches_variants_not_name_noise():
+    from ledgerline import db, seeding
+    from ledgerline.similar import similar_groups
+    conn = db.connect(":memory:"); db.init_db(conn); seeding.seed(conn)
+    now = "2025-01-01T00:00:00"
+    rows = [("Sainsburys S/mkts Birmingham Co", -1250), ("Sainsburys Superma Islington St", -540),
+            ("SAINSBURY'S SMKT", -300), ("Premier Inn London", -8300), ("Peter Wilson", -2000)]
+    for i, (desc, amt) in enumerate(rows):
+        conn.execute(
+            "INSERT INTO transactions (txn_id, account, posting_date, description_raw, amount_pennies, "
+            "source_file, needs_review, created_at, updated_at) VALUES (?,?,?,?,?,?,1,?,?)",
+            (f"t{i}", "monzo", "2025-01-01", desc, amt, "x", now, now))
+    conn.commit()
+    hits = {g["descriptor"] for g in similar_groups(conn, "Sainsburys S/mkts Birmingham Co")}
+    assert any("Superma" in h for h in hits)          # variant name caught
+    assert any("SAINSBURY" in h.upper() for h in hits)
+    # a different person's name must NOT be suggested for "Peter Wilson"
+    noise = {g["descriptor"] for g in similar_groups(conn, "Peter Wilson")}
+    assert "Premier Inn London" not in noise
+
+
 def test_classifier_no_api_key_is_graceful():
     from ledgerline.enrich import classifier
     conn = _loaded_conn()

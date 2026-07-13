@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from ... import counterparties
 from ...categorise import categorise as run_categorise
 from ...normalise import normalise_descriptor
+from ...similar import similar_groups
 from ..auth import require_session
 from ..deps import get_conn
 
@@ -117,6 +118,14 @@ def delete_category(name: str, _: None = Depends(require_session), conn=Depends(
 
 
 # ------------------------------------------------------------------ merchant review
+@router.get("/review/similar")
+def review_similar(descriptor: str, _: None = Depends(require_session), conn=Depends(get_conn),
+                   threshold: float = 0.6) -> dict:
+    """Uncategorised transactions that look like `descriptor` — near-duplicate names
+    to file in the same category. Called right after you categorise a merchant."""
+    return {"groups": similar_groups(conn, descriptor, threshold=threshold)}
+
+
 @router.post("/categorise")
 def recategorise(_: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
     """Re-flow the cascade over stored data after editing rules/categories.

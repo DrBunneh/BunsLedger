@@ -84,6 +84,42 @@ async function addCategoryInline(sel) {
   } catch (e) { alert(e.message); }
 }
 
+// After filing a merchant, surface uncategorised look-alikes to file in one click.
+async function suggestSimilar(descriptor, category, subcategory, list) {
+  let sim;
+  try { sim = await api(`/review/similar?descriptor=${encodeURIComponent(descriptor)}`); }
+  catch { return; }
+  if (!sim.groups.length) return;
+  const label = subcategory ? `${category} ▸ ${subcategory}` : category;
+  const panel = el("div", { class: "card", style: "border-color:var(--accent)" });
+  const header = el("div", { class: "toolbar" },
+    el("b", {}, `Also look like “${descriptor}” — file as ${label}?`), el("span", { class: "spacer" }),
+    el("button", { class: "ghost", onclick: () => panel.remove() }, "dismiss"));
+  panel.append(header);
+  for (const s of sim.groups) {
+    const row = el("div", { class: "toolbar", style: "margin:2px 0" },
+      el("b", {}, s.descriptor), el("span", { class: "pill" }, `${s.count}×`),
+      el("span", { class: s.total_pennies < 0 ? "out" : "in" }, money(s.total_pennies)),
+      el("span", { class: "muted" }, `~${Math.round(s.score * 100)}% match`),
+      el("span", { class: "muted", style: "opacity:.7" }, s.samples[0] || ""),
+      el("span", { class: "spacer" }),
+      el("button", { onclick: async () => {
+        await api("/review/apply", { method: "POST", body: {
+          descriptor: s.descriptor, category, subcategory, merchant: s.descriptor, retro_apply: true }});
+        row.remove();
+        window.dispatchEvent(new CustomEvent("data-changed"));
+        list.querySelectorAll(".group-card").forEach((c) => {
+          if (c.getAttribute("data-descriptor") === s.descriptor) c.remove();
+        });
+        if (!panel.querySelector(".sim-row")) panel.remove();
+      } }, `File as ${category}`),
+      el("button", { class: "ghost", onclick: () => { row.remove(); if (!panel.querySelector(".sim-row")) panel.remove(); } }, "skip"));
+    row.classList.add("sim-row");
+    panel.append(row);
+  }
+  list.prepend(panel);
+}
+
 function groupCard(g, list) {
   const sel = catSelect(g.proposal);
   const merchant = el("input", { type: "text", value: g.descriptor, style: "min-width:180px" });
@@ -107,11 +143,12 @@ function groupCard(g, list) {
       }});
       card.remove();
       window.dispatchEvent(new CustomEvent("data-changed"));
+      if (!asTransfer && category) suggestSimilar(g.descriptor, category, subcategory, list);
       if (!list.querySelector(".group-card")) list.append(el("p", { class: "muted" }, "Backlog cleared for this batch."));
     } catch (e) { status.textContent = e.message; }
   };
 
-  const card = el("div", { class: "card group-card" },
+  const card = el("div", { class: "card group-card", "data-descriptor": g.descriptor },
     el("div", { class: "toolbar" },
       el("b", {}, g.descriptor),
       el("span", { class: "pill" }, `${g.count}×`),
