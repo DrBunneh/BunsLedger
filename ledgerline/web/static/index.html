@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Ledgerline</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div id="login" class="login hidden">
+    <form id="login-form" class="card">
+      <h1>Ledgerline</h1>
+      <p class="muted">Enter your passphrase to unlock.</p>
+      <input type="password" id="passphrase" placeholder="Passphrase" autocomplete="current-password">
+      <button type="submit">Unlock</button>
+      <p id="login-error" class="error hidden"></p>
+    </form>
+  </div>
+
+  <div id="shell" class="hidden">
+    <header class="topbar">
+      <div class="brand">Ledgerline</div>
+      <nav id="nav">
+        <a href="#/import" data-view="import">Import</a>
+        <a href="#/review" data-view="review">Review</a>
+        <a href="#/reports" data-view="reports">Reports</a>
+      </nav>
+      <div id="summary" class="summary muted"></div>
+    </header>
+    <main id="app"></main>
+  </div>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

@@ -51,6 +51,16 @@ def cmd_stats(args) -> None:
     analyse.print_stats(conn)
 
 
+def cmd_serve(args) -> None:
+    from .web.server import serve
+    serve(open_browser=not args.no_browser)
+
+
+def cmd_app(args) -> None:
+    from .web.server import desktop
+    desktop()
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="ledgerline", description=__doc__)
     p.add_argument("--db", default=DEFAULT_DB, help="SQLite path (default finance.db)")
@@ -59,6 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     imp = sub.add_parser("import"); imp.add_argument("files", nargs="+"); imp.set_defaults(func=cmd_import)
     sub.add_parser("categorise").set_defaults(func=cmd_categorise)
     sub.add_parser("stats").set_defaults(func=cmd_stats)
+    srv = sub.add_parser("serve", help="run the local web app (browser)")
+    srv.add_argument("--no-browser", action="store_true"); srv.set_defaults(func=cmd_serve)
+    sub.add_parser("app", help="run as a desktop window (app feel)").set_defaults(func=cmd_app)
     return p
 
 

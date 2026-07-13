@@ -8,17 +8,28 @@ version = "0.1.0"
 description = "Local-first personal finance ingestion, categorisation and analysis (Monzo, Nationwide, Aqua)."
 requires-python = ">=3.10"
 dependencies = [
-    "pymupdf>=1.23",   # PDF text + word coordinates (Nationwide positional, Aqua)
+    "pymupdf>=1.23",        # PDF text + word coordinates (Nationwide positional, Aqua)
+    "fastapi>=0.110",       # JSON API (API-first: web + desktop + future phone client)
+    "uvicorn[standard]>=0.27",
+    "python-multipart>=0.0.9",  # file uploads
+    "itsdangerous>=2.1",    # signed session cookie
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=7"]
+desktop = ["pywebview>=4.4"]  # native-window app feel
+llm = ["anthropic>=0.40"]     # WP4 auto-classifier
+monzo = ["apscheduler>=3.10", "httpx>=0.27"]  # WP5 forward-sync
 
 [project.scripts]
 ledgerline = "ledgerline.cli:main"
 
 [tool.setuptools]
-packages = ["ledgerline", "ledgerline.parsers"]
+packages = ["ledgerline", "ledgerline.parsers", "ledgerline.web", "ledgerline.web.api"]
+
+[tool.setuptools.package-data]
+"ledgerline.web" = ["static/**/*"]
+"ledgerline" = ["schema.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
