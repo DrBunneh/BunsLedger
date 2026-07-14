@@ -33,6 +33,26 @@ ABROAD_TOKENS = {
 }
 _WORD = re.compile(r"[a-z]+")
 
+# Cheap transit that shouldn't, by itself, seed a trip (a £3 fare is a commute).
+_TRANSPORT = re.compile(
+    r"trainline|\btfl\b|transport for london|railway|\brail\b|west midlands trains|"
+    r"east mids|east midlands|avanti|\blner\b|cross country|national express|megabus|"
+    r"\buber\b|\bbolt\b|\btaxi\b|\btram\b|\bmetro\b|oyster|stagecoach|first bus", re.I)
+_COMMUTE_MAX = 1000   # pennies (£10); away transit below this is commute noise, not a trip
+_JOURNEY_MIN = 1500   # pennies (£15); a fare this size is intercity travel, not a commute
+_CARD_MERCH = re.compile(r"cardmarket|fanfinity|drakkar|lorcan|\btcg\b|pokemon|"
+                         r"magic the gathering|star city|troll and toad|collect", re.I)
+_ACCOM = re.compile(r"travelodge|premier inn|holiday inn|\bhotel\b|hostel|airbnb|"
+                    r"booking\.com|marriott|hilton|\bibis\b|premier|novotel", re.I)
+
+
+def is_transport(descriptor: str, merchant: str | None, category: str | None) -> bool:
+    return category == "Transport" or bool(_TRANSPORT.search(f"{descriptor} {merchant or ''}"))
+
+
+def is_automated(txn_type: str | None) -> bool:
+    return txn_type in ("direct_debit", "standing_order")
+
 
 def extract_location(descriptor: str) -> tuple[str | None, str | None]:
     """Return (scope, place): ('uk', 'london') | ('abroad', 'fra') | (None, None)."""
@@ -85,6 +105,7 @@ def meal_hint(dt: str | None) -> str | None:
 
 def _row(r, home: str) -> dict:
     scope, place = extract_location(r["description_raw"])
+    transport = is_transport(r["description_raw"], r["merchant"], r["category"])
     return {
         "txn_id": r["txn_id"], "account": r["account"], "date": r["posting_date"],
         "datetime": r["datetime"], "description_raw": r["description_raw"],
@@ -92,11 +113,13 @@ def _row(r, home: str) -> dict:
         "category": r["category"], "is_transfer": r["is_transfer"],
         "place": place, "away": bool(is_away(r["description_raw"], r["fx_currency"], home)),
         "meal": meal_hint(r["datetime"]),
+        "transport": transport, "automated": is_automated(r["txn_type"]),
+        "abroad": extract_location(r["description_raw"])[0] == "abroad" or bool(r["fx_currency"]),
     }
 
 
 _SELECT = ("SELECT txn_id, account, posting_date, datetime, description_raw, merchant, "
-           "amount_pennies, category, is_transfer, fx_currency FROM transactions")
+           "amount_pennies, category, is_transfer, fx_currency, txn_type FROM transactions")
 
 
 def surrounding(conn, txn_id: str, days: int = 2) -> dict:
@@ -114,44 +137,85 @@ def surrounding(conn, txn_id: str, days: int = 2) -> dict:
     return {"home": home, "center": txn_id, "window": [_row(r, home) for r in rows]}
 
 
+def _accom(r: dict) -> bool:
+    return bool(_ACCOM.search(f"{r['description_raw']} {r['merchant'] or ''}"))
+
+
+def _seeds_trip(r: dict) -> bool:
+    """Signals strong enough to say 'this was a trip, not a commute':
+    foreign spend, geo-located away non-transit spend, a substantial (intercity) fare,
+    or an overnight stay. A cheap local transit tap alone does NOT qualify."""
+    if r["is_transfer"] or r["automated"]:
+        return False
+    if r["abroad"]:
+        return True
+    if r["away"] and not r["transport"]:            # you bought something in another city
+        return True
+    if r["transport"] and abs(r["amount_pennies"]) >= _JOURNEY_MIN:  # real journey, not a £3 tap
+        return True
+    return _accom(r)                                 # an overnight is always a trip
+
+
+def _in_trip(r: dict, home: str | None) -> bool:
+    """A transaction belongs to a trip only if it's genuinely part of being away:
+    away spend, or a location-less line (a coffee with no city). Home-located and
+    automated payments (a Direct Debit that fired mid-trip) are excluded."""
+    if r["is_transfer"] or r["automated"]:
+        return False
+    if r["place"] == home and home is not None:
+        return False
+    return r["away"] or r["place"] is None
+
+
+def _guess_purpose(members: list[dict]) -> str | None:
+    if any(_CARD_MERCH.search(f"{m['description_raw']} {m['merchant'] or ''}") or m["category"] == "Cards"
+           for m in members):
+        return "card"
+    if any(m["abroad"] for m in members):
+        return "holiday"
+    return None
+
+
 def episodes(conn, gap_days: int = 3, min_txns: int = 2, limit: int = 60) -> dict:
-    """Cluster away-from-home spend into trips. An episode is a run of away transactions
-    no more than gap_days apart; its transactions are everything in that date span (so the
-    train out and the taxi home are included, not just the away legs)."""
+    """Cluster away-from-home spend into trips.
+
+    Seeds only on NON-trivial away spend (a £3 commute fare alone isn't a trip), then
+    each episode's transactions are the trip-relevant ones in that date span — away or
+    location-less lines, excluding home-located and automated (Direct Debit) payments.
+    """
     home = infer_home(conn)
     rows = [_row(r, home) for r in conn.execute(_SELECT + " ORDER BY posting_date, datetime").fetchall()]
-    away = [r for r in rows if r["away"] and not r["is_transfer"]]
-    if not away:
+    seeds = [r for r in rows if _seeds_trip(r)]
+    if not seeds:
         return {"home": home, "episodes": []}
 
-    # gap-cluster the away transactions by date
     clusters: list[list[dict]] = []
-    cur = [away[0]]
-    for r in away[1:]:
+    cur = [seeds[0]]
+    for r in seeds[1:]:
         if _daydiff(cur[-1]["date"], r["date"]) <= gap_days:
             cur.append(r)
         else:
             clusters.append(cur); cur = [r]
     clusters.append(cur)
 
-    by_date = {}
+    by_date: dict[str, list] = {}
     for r in rows:
         by_date.setdefault(r["date"], []).append(r)
 
     eps = []
     for cl in clusters:
         d0, d1 = cl[0]["date"], cl[-1]["date"]
-        span = [r for d, rs in by_date.items() if d0 <= d <= d1 for r in rs if not r["is_transfer"]]
+        span = [r for d, rs in by_date.items() if d0 <= d <= d1 for r in rs if _in_trip(r, home)]
         if len(span) < min_txns:
             continue
         span.sort(key=lambda r: (r["date"], r["datetime"] or ""))
-        places = sorted({r["place"] for r in cl if r["place"]})
-        spend = sum(-r["amount_pennies"] for r in span if r["amount_pennies"] < 0)
         eps.append({
-            "date_from": d0, "date_to": d1, "places": places,
-            "abroad": any(extract_location(r["description_raw"])[0] == "abroad" for r in cl),
-            "count": len(span), "spend_pennies": spend,
+            "date_from": d0, "date_to": d1,
+            "places": sorted({r["place"] for r in span if r["place"]}),
+            "abroad": any(r["abroad"] for r in cl),
+            "count": len(span), "spend_pennies": sum(-r["amount_pennies"] for r in span if r["amount_pennies"] < 0),
             "uncategorised": sum(1 for r in span if r["category"] is None and r["amount_pennies"] < 0),
+            "purpose_guess": _guess_purpose(span),
             "transactions": span,
         })
     eps.sort(key=lambda e: e["date_to"], reverse=True)

@@ -174,6 +174,36 @@ def test_context_episodes_and_location():
     assert london[0]["count"] == 3 and london[0]["date_from"] == "2025-11-15"
 
 
+def test_trip_seeding_excludes_commute_and_home_dd():
+    from ledgerline import db, seeding, context
+    conn = db.connect(":memory:"); db.init_db(conn); seeding.seed(conn)
+    def ins(i, d, desc, amt, dt=None, txn_type=None):
+        conn.execute(
+            "INSERT INTO transactions (txn_id, account, posting_date, datetime, description_raw, "
+            "amount_pennies, txn_type, source_file, needs_review, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,?,1,?,?)", (f"t{i}", "monzo", d, dt, desc, amt, txn_type, "x", d, d))
+    # Establish Birmingham as home (dominant location).
+    for j, d in enumerate(["2025-09-01", "2025-09-08", "2025-09-15", "2025-09-22", "2025-09-29"]):
+        ins(100 + j, d, "Sainsburys Birmingham", -1500)
+    # A commute-only London day: cheap TfL + a home lunch -> should NOT seed a trip.
+    ins(0, "2025-10-01", "Transport for London", -290)
+    ins(1, "2025-10-01", "Greggs Birmingham", -320)
+    # A real trip: a £45 intercity fare + away food + an overnight, plus a home DD mid-trip.
+    ins(2, "2025-10-10", "Trainline", -4500)                 # £45 journey -> seeds
+    ins(3, "2025-10-10", "Tabac Cafe London", -1900)          # away food
+    ins(4, "2025-10-10", "Travelodge London", -8900)          # overnight
+    ins(5, "2025-10-10", "Octopus Energy", -9000, txn_type="direct_debit")  # home DD mid-trip
+    conn.commit()
+    eps = context.episodes(conn, gap_days=3, min_txns=2)["episodes"]
+    days = {e["date_from"] for e in eps}
+    assert "2025-10-01" not in days           # commute-only day is not a trip
+    assert "2025-10-10" in days               # the real journey is
+    trip = next(e for e in eps if e["date_from"] == "2025-10-10")
+    descs = {t["description_raw"] for t in trip["transactions"]}
+    assert "Octopus Energy" not in descs      # automated home DD excluded from the trip
+    assert "Travelodge London" in descs
+
+
 def test_classifier_no_api_key_is_graceful():
     from ledgerline.enrich import classifier
     conn = _loaded_conn()

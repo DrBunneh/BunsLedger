@@ -45,7 +45,8 @@ export async function render(app) {
   const cashCard = el("div", { class: "card" });
   const catCard = el("div", { class: "card" });
   const recCard = el("div", { class: "card" });
-  app.append(head, tiles, cashCard, catCard, recCard);
+  const tripCard = el("div", { class: "card" });
+  app.append(head, tiles, cashCard, catCard, tripCard, recCard);
 
   async function load() {
     const months = parseInt(range.value, 10);
@@ -76,6 +77,29 @@ export async function render(app) {
     catCard.innerHTML = "";
     catCard.append(el("h3", {}, "Spend by category"),
       barsH(spendCats.slice(0, 12).map((c) => ({ label: c.category, value: c.spend_pennies })), { max: cmax }));
+
+    const trips = await api("/reports/trips");
+    tripCard.innerHTML = "";
+    tripCard.append(el("h3", {}, "Trips"));
+    if (!trips.trips.length) {
+      tripCard.append(el("p", { class: "muted" }, "No labelled trips yet. Go to the Trips tab, label an episode (card / work / holiday) and Save it — its spend shows up here, grouped by purpose."));
+    } else {
+      tripCard.append(el("div", { class: "toolbar" }, ...trips.by_purpose.map((p) =>
+        stat(p.purpose, money(-p.spend_pennies), "out"))));
+      const tt = el("table", {}, el("thead", {}, el("tr", {},
+        ...["Trip", "Purpose", "Dates", "Txns", "Spend", "Breakdown"].map((h) => el("th", {}, h)))));
+      const tbb = el("tbody");
+      for (const tr of trips.trips) {
+        tbb.append(el("tr", {},
+          el("td", {}, tr.name),
+          el("td", {}, el("span", { class: "pill" }, tr.purpose)),
+          el("td", { class: "muted" }, tr.date_from === tr.date_to ? tr.date_from : `${tr.date_from}→${tr.date_to}`),
+          el("td", { class: "num" }, tr.count),
+          el("td", { class: "num out" }, money(-tr.spend_pennies)),
+          el("td", { class: "muted" }, tr.by_category.map((c) => `${c.category} ${money(-c.spend_pennies)}`).join(" · "))));
+      }
+      tt.append(tbb); tripCard.append(tt);
+    }
 
     recCard.innerHTML = "";
     const t = el("table", {}, el("thead", {}, el("tr", {},

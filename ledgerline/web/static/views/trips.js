@@ -59,7 +59,22 @@ function episodeCard(e, refresh) {
         el("td", {}, r.is_transfer ? el("span", { class: "pill" }, "transfer") : sel)));
     }
     t.append(tb);
+    // label the trip: name + purpose -> tag every member (enables trip-aware reporting)
+    const defName = `${(e.places[0] || "trip")} ${e.date_from}`;
+    const nameInp = el("input", { type: "text", value: defName, style: "min-width:220px" });
+    const purpose = el("select", {}, ...["", "card", "work", "holiday", "personal"].map((p) =>
+      el("option", { value: p, ...(p === (e.purpose_guess || "") ? { selected: "" } : {}) }, p || "— purpose —")));
+    const saveMsg = el("span", { class: "muted" });
+    const saveBtn = el("button", { class: "ghost", onclick: async () => {
+      const ids = e.transactions.map((t) => t.txn_id);
+      const r = await api("/trips/tag", { method: "POST", body: {
+        txn_ids: ids, name: nameInp.value.trim() || defName, purpose: purpose.value || null } });
+      saveMsg.textContent = `saved “${r.trip}” (${r.tagged} txns)`;
+      window.dispatchEvent(new CustomEvent("data-changed"));
+    } }, "Save trip");
+
     body.append(
+      el("div", { class: "toolbar" }, el("span", { class: "muted" }, "Trip "), nameInp, purpose, saveBtn, saveMsg),
       el("div", { class: "toolbar" }, el("span", { class: "muted" }, "Bulk-file the uncategorised: "),
         bulkSel, bulkBtn, bulkMsg),
       el("div", { style: "overflow-x:auto" }, t));

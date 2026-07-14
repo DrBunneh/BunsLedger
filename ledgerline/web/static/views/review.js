@@ -174,6 +174,27 @@ function groupCard(g, list) {
   return card;
 }
 
+// Expand a row to show ±2 days of surrounding activity (all accounts, in time order).
+async function toggleContext(r, tr) {
+  const next = tr.nextElementSibling;
+  if (next && next.classList.contains("ctx-row")) { next.remove(); return; }
+  const ctx = await api(`/transactions/${r.txn_id}/context?days=2`);
+  const inner = el("table", { style: "width:100%;background:var(--panel-2);border-radius:8px" });
+  for (const w of ctx.window) {
+    const when = w.meal || (w.datetime ? w.datetime.slice(11, 16) : "");
+    inner.append(el("tr", { style: w.txn_id === r.txn_id ? "font-weight:700" : "" },
+      el("td", { style: "width:90px" }, w.date),
+      el("td", { class: "muted", style: "width:80px" }, when),
+      el("td", { class: "num " + (w.amount_pennies < 0 ? "out" : "in"), style: "width:90px" }, money(w.amount_pennies)),
+      el("td", {}, (w.description_raw || "").slice(0, 44)),
+      el("td", { style: "width:90px" }, w.away ? el("span", { class: "pill", title: w.place || "" }, w.place || "away") : ""),
+      el("td", { class: "muted", style: "width:120px" }, w.category || "")));
+  }
+  const td = el("td", { colspan: "8", style: "padding:8px 16px" },
+    el("div", { class: "muted", style: "margin-bottom:6px" }, `Around this (±2 days, home: ${ctx.home || "?"})`), inner);
+  tr.after(el("tr", { class: "ctx-row" }, td));
+}
+
 // -------------------------------------------------------------------- table mode
 async function renderAll(body) {
   const state = { q: "", account: "", needs_review: "", page: 1, page_size: 50 };
@@ -208,7 +229,7 @@ async function renderAll(body) {
         await api(`/transactions/${r.txn_id}`, { method: "POST", body: { category, subcategory } });
         window.dispatchEvent(new CustomEvent("data-changed"));
       });
-      tb.append(el("tr", {},
+      const tr = el("tr", {},
         el("td", {}, r.posting_date),
         el("td", {}, r.account),
         el("td", { title: r.description_raw }, r.description_raw.slice(0, 40)),
@@ -216,7 +237,10 @@ async function renderAll(body) {
         el("td", { class: "num " + (r.amount_pennies < 0 ? "out" : "in") }, money(r.amount_pennies)),
         el("td", {}, r.is_transfer ? el("span", { class: "pill" }, "transfer") : sel),
         el("td", {}, r.counterparty || ""),
-        el("td", {}, r.needs_review ? el("span", { class: "pill review" }, "review") : "")));
+        el("td", {}, el("button", { class: "ghost", style: "padding:2px 8px;font-size:12px",
+          title: "what else was happening around this?", onclick: () => toggleContext(r, tr) }, "context"),
+          r.needs_review ? el("span", { class: "pill review", style: "margin-left:6px" }, "review") : ""));
+      tb.append(tr);
     }
     t.append(tb);
     tableWrap.innerHTML = ""; tableWrap.append(t);

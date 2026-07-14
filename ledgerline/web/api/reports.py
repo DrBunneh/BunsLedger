@@ -88,6 +88,38 @@ def top_merchants(_: None = Depends(require_session), conn=Depends(get_conn),
     return {"merchants": [{"merchant": r["m"], "count": r["n"], "spend_pennies": r["spend"]} for r in rows]}
 
 
+@router.get("/reports/trips")
+def trips_report(_: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    """Spend grouped by trips you've labelled (tags of kind trip*), broken down by
+    purpose and category — 'card trips cost £X, holidays £Y'."""
+    import collections
+    tags = conn.execute("SELECT id, name, kind FROM tags WHERE kind LIKE 'trip%'").fetchall()
+    trips, by_purpose = [], collections.Counter()
+    for t in tags:
+        rows = conn.execute(
+            "SELECT tr.posting_date, tr.amount_pennies, tr.category FROM transactions tr "
+            "JOIN transaction_tags tt ON tt.txn_id=tr.txn_id WHERE tt.tag_id=? AND tr.is_transfer=0",
+            (t["id"],)).fetchall()
+        if not rows:
+            continue
+        spend = sum(-r["amount_pennies"] for r in rows if r["amount_pennies"] < 0)
+        cats: collections.Counter = collections.Counter()
+        for r in rows:
+            if r["amount_pennies"] < 0:
+                cats[r["category"] or "(uncategorised)"] += -r["amount_pennies"]
+        purpose = t["kind"].split(":", 1)[1] if ":" in t["kind"] else "other"
+        by_purpose[purpose] += spend
+        trips.append({
+            "name": t["name"], "purpose": purpose, "count": len(rows), "spend_pennies": spend,
+            "date_from": min(r["posting_date"] for r in rows),
+            "date_to": max(r["posting_date"] for r in rows),
+            "by_category": [{"category": c, "spend_pennies": v} for c, v in cats.most_common(6)],
+        })
+    trips.sort(key=lambda x: -x["spend_pennies"])
+    return {"trips": trips, "by_purpose": [{"purpose": p, "spend_pennies": v}
+                                           for p, v in by_purpose.most_common()]}
+
+
 @router.get("/reports/recurring")
 def recurring(_: None = Depends(require_session), conn=Depends(get_conn),
               min_months: int = 3) -> dict:
