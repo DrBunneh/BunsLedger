@@ -145,6 +145,35 @@ def test_similar_matches_variants_not_name_noise():
     assert "Premier Inn London" not in noise
 
 
+def test_context_episodes_and_location():
+    from ledgerline import db, seeding, context
+    conn = db.connect(":memory:"); db.init_db(conn); seeding.seed(conn)
+    # home = birmingham (5 rows), a 2-day London trip, and one unrelated home day later
+    rows = [
+        ("2025-11-01", "Sainsburys S/mkts Birmingham Co", -1200, "2025-11-01T12:00:00"),
+        ("2025-11-02", "Greggs Birmingham", -300, "2025-11-02T09:00:00"),
+        ("2025-11-03", "Aldi Birmingham", -2500, "2025-11-03T17:00:00"),
+        ("2025-11-15", "Trainline London", -4500, "2025-11-15T08:30:00"),
+        ("2025-11-15", "Tabac Cafe London", -1900, "2025-11-15T20:15:00"),
+        ("2025-11-16", "Travelodge London", -8900, "2025-11-16T09:00:00"),
+        ("2025-12-20", "Wm Morrison Birmingham", -3300, "2025-12-20T18:00:00"),
+    ]
+    for i, (d, desc, amt, dt) in enumerate(rows):
+        conn.execute(
+            "INSERT INTO transactions (txn_id, account, posting_date, datetime, description_raw, "
+            "amount_pennies, source_file, needs_review, created_at, updated_at) "
+            "VALUES (?,?,?,?,?,?,?,1,?,?)", (f"t{i}", "monzo", d, dt, desc, amt, "x", dt, dt))
+    conn.commit()
+    assert context.infer_home(conn) == "birmingham"
+    assert context.is_away("Trainline London", None, "birmingham") is True
+    assert context.is_away("Greggs Birmingham", None, "birmingham") is False
+    assert context.meal_hint("2025-11-15T20:15:00") == "dinner"
+    eps = context.episodes(conn, gap_days=3, min_txns=2)["episodes"]
+    london = [e for e in eps if "london" in e["places"]]
+    assert len(london) == 1                       # the 15-16 Nov trip clusters as one episode
+    assert london[0]["count"] == 3 and london[0]["date_from"] == "2025-11-15"
+
+
 def test_classifier_no_api_key_is_graceful():
     from ledgerline.enrich import classifier
     conn = _loaded_conn()
