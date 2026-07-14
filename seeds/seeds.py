@@ -54,6 +54,18 @@ CATEGORIES = [
     ("Food", "Cards", "spend"),
     ("Supplies", "Cards", "spend"),
     ("Card purchases", "Cards", "spend"),
+    # Trip-purpose budgets. Subcategory names repeat across parents (parent-scoped),
+    # so 'Food'/'Travel'/'Accommodation' can live under Cards, Holiday AND Work.
+    ("Holiday", None, "spend"),
+    ("Travel", "Holiday", "spend"),
+    ("Accommodation", "Holiday", "spend"),
+    ("Food", "Holiday", "spend"),
+    ("Activities", "Holiday", "spend"),
+    ("Work", None, "spend"),
+    ("Travel", "Work", "spend"),
+    ("Accommodation", "Work", "spend"),
+    ("Food", "Work", "spend"),
+    ("Expenses", "Work", "spend"),
     ("Fees & Interest", None, "spend"),
     ("Transfers", None, "transfer"),
 ]

@@ -91,28 +91,39 @@ def add_category(body: CategoryBody, _: None = Depends(require_session), conn=De
         raise HTTPException(400, "name required")
     if body.kind not in ("income", "spend", "transfer"):
         raise HTTPException(400, "kind must be income|spend|transfer")
-    if body.parent and conn.execute("SELECT 1 FROM categories WHERE name=?", (body.parent,)).fetchone() is None:
+    if body.parent and conn.execute(
+            "SELECT 1 FROM categories WHERE name=? AND parent IS NULL", (body.parent,)).fetchone() is None:
         raise HTTPException(400, f"parent '{body.parent}' does not exist")
-    if conn.execute("SELECT 1 FROM categories WHERE name=?", (name,)).fetchone():
-        raise HTTPException(409, f"category '{name}' already exists (names are unique)")
-    # a child inherits its parent's kind
-    kind = conn.execute("SELECT kind FROM categories WHERE name=?", (body.parent,)).fetchone()["kind"] \
-        if body.parent else body.kind
+    if conn.execute("SELECT 1 FROM categories WHERE name=? AND IFNULL(parent,'')=IFNULL(?,'')",
+                    (name, body.parent)).fetchone():
+        where = f"under '{body.parent}'" if body.parent else "at top level"
+        raise HTTPException(409, f"category '{name}' already exists {where}")
+    # a child inherits its parent's kind (names are scoped to parent now)
+    kind = conn.execute("SELECT kind FROM categories WHERE name=? AND parent IS NULL",
+                        (body.parent,)).fetchone()["kind"] if body.parent else body.kind
     conn.execute("INSERT INTO categories (name, parent, kind) VALUES (?,?,?)", (name, body.parent, kind))
     conn.commit()
     return {"ok": True, "name": name, "parent": body.parent, "kind": kind}
 
 
 @router.delete("/categories/{name}")
-def delete_category(name: str, _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
-    if conn.execute("SELECT 1 FROM categories WHERE parent=?", (name,)).fetchone():
+def delete_category(name: str, parent: str | None = None,
+                    _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    """Delete a category (top-level) or subcategory (pass ?parent=). Blocked while it
+    has subcategories or is still used by transactions."""
+    if parent is None and conn.execute("SELECT 1 FROM categories WHERE parent=?", (name,)).fetchone():
         raise HTTPException(400, "delete or move its subcategories first")
-    used = conn.execute(
-        "SELECT COUNT(*) FROM transactions WHERE category=? OR subcategory=?", (name, name)).fetchone()[0]
+    if parent:                                  # a specific subcategory of `parent`
+        used = conn.execute("SELECT COUNT(*) FROM transactions WHERE category=? AND subcategory=?",
+                            (parent, name)).fetchone()[0]
+        rule_where, rule_args = "category=? AND subcategory=?", (parent, name)
+    else:                                        # a top-level category
+        used = conn.execute("SELECT COUNT(*) FROM transactions WHERE category=?", (name,)).fetchone()[0]
+        rule_where, rule_args = "category=?", (name,)
     if used:
-        raise HTTPException(400, f"{used} transactions still use '{name}' — recategorise them first")
-    conn.execute("DELETE FROM merchant_rules WHERE category=? OR subcategory=?", (name, name))
-    conn.execute("DELETE FROM categories WHERE name=?", (name,))
+        raise HTTPException(400, f"{used} transactions still use it — recategorise them first")
+    conn.execute(f"DELETE FROM merchant_rules WHERE {rule_where}", rule_args)
+    conn.execute("DELETE FROM categories WHERE name=? AND IFNULL(parent,'')=IFNULL(?,'')", (name, parent))
     conn.commit()
     return {"ok": True}
 

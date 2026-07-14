@@ -38,19 +38,19 @@ export async function render(app) {
     for (const t of cats.top) {
       tree.append(el("div", { class: "toolbar", style: "margin:2px 0" },
         el("b", {}, t), el("span", { class: "pill" }, cats.kinds[t]),
-        delBtn(t, load)));
+        delBtn(t, null, load)));
       for (const s of (cats.subcategories[t] || [])) {
         tree.append(el("div", { class: "toolbar", style: "margin:2px 0 2px 24px" },
-          el("span", { class: "muted" }, "▸ " + s), delBtn(s, load)));
+          el("span", { class: "muted" }, "▸ " + s), delBtn(s, t, load)));
       }
     }
   }
 
-  function delBtn(catName, reload) {
+  function delBtn(catName, parent, reload) {
+    const q = parent ? `?parent=${encodeURIComponent(parent)}` : "";
     return el("button", { class: "ghost", style: "padding:2px 8px;font-size:12px",
       onclick: async () => {
-        const st = el("span");
-        try { await api(`/categories/${encodeURIComponent(catName)}`, { method: "DELETE" });
+        try { await api(`/categories/${encodeURIComponent(catName)}${q}`, { method: "DELETE" });
           window.dispatchEvent(new CustomEvent("cats-changed")); reload();
         } catch (e) { alert(e.message); }
       } }, "delete");

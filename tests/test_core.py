@@ -204,6 +204,47 @@ def test_trip_seeding_excludes_commute_and_home_dd():
     assert "Travelodge London" in descs
 
 
+def test_parent_scoped_subcategories():
+    from ledgerline import db, seeding
+    conn = db.connect(":memory:"); db.init_db(conn); seeding.seed(conn)
+    # seeds now include the same leaf name under multiple parents
+    rows = conn.execute("SELECT parent FROM categories WHERE name='Food' ORDER BY parent").fetchall()
+    parents = {r["parent"] for r in rows}
+    assert {"Cards", "Holiday", "Work"} <= parents
+    # the composite-unique index blocks a true duplicate but allows a new parent
+    import sqlite3
+    try:
+        conn.execute("INSERT INTO categories(name,parent,kind) VALUES ('Food','Cards','spend')")
+        assert False, "duplicate (Food, Cards) should be blocked"
+    except sqlite3.IntegrityError:
+        pass
+    conn.execute("INSERT INTO categories(name,parent,kind) VALUES ('Food','Personal','spend')")  # ok
+
+
+def test_trip_tag_split_and_untag():
+    from ledgerline import db, seeding
+    from ledgerline.web.api.context import tag_trip, untag_trip, TagTripBody, UntagTripBody
+    conn = db.connect(":memory:"); db.init_db(conn); seeding.seed(conn)
+    now = "2025-01-01T00:00:00"
+    for i in range(6):
+        conn.execute("INSERT INTO transactions (txn_id, account, posting_date, description_raw, "
+                     "amount_pennies, source_file, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?)",
+                     (f"t{i}", "monzo", "2025-01-01", f"m{i}", -100, "x", now, now))
+    conn.commit()
+    # split: two halves -> two trips
+    tag_trip(TagTripBody(txn_ids=["t0", "t1", "t2"], name="A", purpose="card"), None, conn)
+    tag_trip(TagTripBody(txn_ids=["t3", "t4", "t5"], name="B", purpose="holiday"), None, conn)
+    def count(name):
+        return conn.execute(
+            "SELECT COUNT(*) FROM transaction_tags tt JOIN tags t ON t.id=tt.tag_id WHERE t.name=?",
+            (name,)).fetchone()[0]
+    assert count("A") == 3 and count("B") == 3
+    # merge B into A, then untag from B
+    tag_trip(TagTripBody(txn_ids=["t3", "t4", "t5"], name="A", purpose="card"), None, conn)
+    untag_trip(UntagTripBody(txn_ids=["t3", "t4", "t5"], name="B"), None, conn)
+    assert count("A") == 6 and count("B") == 0
+
+
 def test_classifier_no_api_key_is_graceful():
     from ledgerline.enrich import classifier
     conn = _loaded_conn()

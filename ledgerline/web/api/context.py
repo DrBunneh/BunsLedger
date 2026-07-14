@@ -17,6 +17,31 @@ class TagTripBody(BaseModel):
     purpose: str | None = None   # card | work | holiday | personal
 
 
+@router.get("/trips/names")
+def trip_names(_: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    """Existing labelled-trip names (for merging a detected episode into one)."""
+    rows = conn.execute(
+        "SELECT name, kind FROM tags WHERE kind LIKE 'trip%' ORDER BY name").fetchall()
+    return {"names": [{"name": r["name"], "purpose": r["kind"].split(":", 1)[1] if ":" in r["kind"] else None}
+                      for r in rows]}
+
+
+class UntagTripBody(BaseModel):
+    txn_ids: list[str]
+    name: str
+
+
+@router.post("/trips/untag")
+def untag_trip(body: UntagTripBody, _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
+    """Remove transactions from a trip (for splitting a mis-merged episode)."""
+    row = conn.execute("SELECT id FROM tags WHERE name=?", (body.name,)).fetchone()
+    if row:
+        conn.executemany("DELETE FROM transaction_tags WHERE txn_id=? AND tag_id=?",
+                         [(i, row[0]) for i in body.txn_ids])
+        conn.commit()
+    return {"ok": True, "untagged": len(body.txn_ids)}
+
+
 @router.post("/trips/tag")
 def tag_trip(body: TagTripBody, _: None = Depends(require_session), conn=Depends(get_conn)) -> dict:
     """Label a trip: tag its transactions with a trip name + purpose so trip-aware

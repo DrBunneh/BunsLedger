@@ -27,30 +27,28 @@ function episodeCard(e, refresh) {
   const body = el("div", { class: "hidden" });
 
   // bulk-file controls
-  const bulkSel = catSelect(e.abroad ? "Cards ▸ Travel" : null);
-  const bulkMsg = el("span", { class: "muted" });
-  const bulkBtn = el("button", { onclick: async () => {
-    const [category, subcategory] = splitPath(bulkSel.value);
-    if (!category) { bulkMsg.textContent = "pick a category"; return; }
-    const ids = e.transactions.filter((t) => t.category === null && t.amount_pennies < 0).map((t) => t.txn_id);
-    if (!ids.length) { bulkMsg.textContent = "nothing uncategorised here"; return; }
-    await api("/review/apply", { method: "POST", body: { txn_ids: ids, category, subcategory } });
-    window.dispatchEvent(new CustomEvent("data-changed"));
-    refresh();
-  } }, "File uncategorised");
+  const defName = `${(e.places[0] || "trip")} ${e.date_from}`;
 
-  function fill() {
+  async function fill() {
     body.innerHTML = "";
-    const t = el("table", {}, el("thead", {}, el("tr", {},
-      ...["Date", "When", "Amount", "Description", "", "Category"].map((h) => el("th", {}, h)))));
+    const names = (await api("/trips/names")).names;                 // for merge
+    const listId = `tl-${e.date_from}-${e.date_to}`.replace(/[^a-z0-9-]/gi, "");
+    const checks = [];   // {r, cb}
+    const checkedIds = () => checks.filter((x) => x.cb.checked).map((x) => x.r.txn_id);
+
+    const headCb = el("input", { type: "checkbox", checked: "", title: "select all",
+      onchange: () => checks.forEach((x) => { x.cb.checked = headCb.checked; }) });
     const tb = el("tbody");
     for (const r of e.transactions) {
+      const cb = el("input", { type: "checkbox", checked: "" });
+      checks.push({ r, cb });
       const sel = catSelect(r.category, async (ev) => {
         const [category, subcategory] = splitPath(ev.target.value);
         await api(`/transactions/${r.txn_id}`, { method: "POST", body: { category, subcategory } });
         window.dispatchEvent(new CustomEvent("data-changed"));
       });
       tb.append(el("tr", {},
+        el("td", {}, cb),
         el("td", {}, r.date),
         el("td", { class: "muted" }, r.meal || (r.datetime ? r.datetime.slice(11, 16) : "")),
         el("td", { class: "num " + (r.amount_pennies < 0 ? "out" : "in") }, money(r.amount_pennies)),
@@ -58,25 +56,51 @@ function episodeCard(e, refresh) {
         el("td", {}, r.away ? el("span", { class: "pill", title: r.place || "" }, r.place || "away") : ""),
         el("td", {}, r.is_transfer ? el("span", { class: "pill" }, "transfer") : sel)));
     }
-    t.append(tb);
-    // label the trip: name + purpose -> tag every member (enables trip-aware reporting)
-    const defName = `${(e.places[0] || "trip")} ${e.date_from}`;
-    const nameInp = el("input", { type: "text", value: defName, style: "min-width:220px" });
+    const t = el("table", {}, el("thead", {}, el("tr", {},
+      el("th", {}, headCb), ...["Date", "When", "Amount", "Description", "", "Category"].map((h) => el("th", {}, h)))), tb);
+
+    // --- trip label / split / merge ---
+    const nameInp = el("input", { type: "text", value: defName, list: listId, style: "min-width:220px" });
+    const datalist = el("datalist", { id: listId }, ...names.map((n) => el("option", { value: n.name })));
     const purpose = el("select", {}, ...["", "card", "work", "holiday", "personal"].map((p) =>
       el("option", { value: p, ...(p === (e.purpose_guess || "") ? { selected: "" } : {}) }, p || "— purpose —")));
     const saveMsg = el("span", { class: "muted" });
-    const saveBtn = el("button", { class: "ghost", onclick: async () => {
-      const ids = e.transactions.map((t) => t.txn_id);
+    const save = el("button", { class: "ghost", onclick: async () => {
+      const ids = checkedIds();
+      if (!ids.length) { saveMsg.textContent = "tick some rows first"; return; }
       const r = await api("/trips/tag", { method: "POST", body: {
         txn_ids: ids, name: nameInp.value.trim() || defName, purpose: purpose.value || null } });
-      saveMsg.textContent = `saved “${r.trip}” (${r.tagged} txns)`;
+      saveMsg.textContent = `saved “${r.trip}” (${r.tagged} of ${e.transactions.length})`;
       window.dispatchEvent(new CustomEvent("data-changed"));
-    } }, "Save trip");
+    } }, "Save ticked as trip");
+    const untag = el("button", { class: "ghost", onclick: async () => {
+      const ids = checkedIds();
+      if (!ids.length || !nameInp.value.trim()) { saveMsg.textContent = "pick a name + rows"; return; }
+      const r = await api("/trips/untag", { method: "POST", body: { txn_ids: ids, name: nameInp.value.trim() } });
+      saveMsg.textContent = `removed ${r.untagged} from “${nameInp.value.trim()}”`;
+      window.dispatchEvent(new CustomEvent("data-changed"));
+    } }, "Remove ticked");
+
+    // --- bulk-file the ticked, uncategorised rows ---
+    const bulkSel = catSelect(e.purpose_guess === "card" ? "Cards ▸ Travel"
+      : e.purpose_guess === "holiday" ? "Holiday ▸ Travel" : null);
+    const bulkMsg = el("span", { class: "muted" });
+    const bulk = el("button", { onclick: async () => {
+      const [category, subcategory] = splitPath(bulkSel.value);
+      if (!category) { bulkMsg.textContent = "pick a category"; return; }
+      const set = new Set(checkedIds());
+      const ids = e.transactions.filter((x) => set.has(x.txn_id) && x.category === null && x.amount_pennies < 0).map((x) => x.txn_id);
+      if (!ids.length) { bulkMsg.textContent = "no ticked uncategorised rows"; return; }
+      await api("/review/apply", { method: "POST", body: { txn_ids: ids, category, subcategory } });
+      window.dispatchEvent(new CustomEvent("data-changed"));
+      refresh();
+    } }, "File ticked");
 
     body.append(
-      el("div", { class: "toolbar" }, el("span", { class: "muted" }, "Trip "), nameInp, purpose, saveBtn, saveMsg),
-      el("div", { class: "toolbar" }, el("span", { class: "muted" }, "Bulk-file the uncategorised: "),
-        bulkSel, bulkBtn, bulkMsg),
+      el("div", { class: "muted", style: "margin-bottom:4px" },
+        "Tick rows to include. Save under a NEW name to split a trip; save into an EXISTING name (type-ahead) to merge."),
+      el("div", { class: "toolbar" }, el("span", { class: "muted" }, "Trip "), nameInp, datalist, purpose, save, untag, saveMsg),
+      el("div", { class: "toolbar" }, el("span", { class: "muted" }, "Category "), bulkSel, bulk, bulkMsg),
       el("div", { style: "overflow-x:auto" }, t));
   }
 

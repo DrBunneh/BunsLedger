@@ -5,12 +5,18 @@ PRAGMA foreign_keys = ON;
 -- ---------------------------------------------------------------------------
 -- Taxonomy
 -- ---------------------------------------------------------------------------
+-- Subcategory names are scoped to their parent: 'Food' can exist under both 'Cards'
+-- and 'Holiday'. A leaf is identified by the (parent, name) pair / the 'Parent ▸ Child'
+-- path. category/subcategory columns elsewhere are plain TEXT (validated in-app), not FKs.
 CREATE TABLE IF NOT EXISTS categories (
-    name                   TEXT PRIMARY KEY,
-    parent                 TEXT REFERENCES categories(name),
+    id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                   TEXT NOT NULL,
+    parent                 TEXT,               -- NULL for a top-level category
     kind                   TEXT NOT NULL CHECK (kind IN ('income', 'spend', 'transfer')),
     monthly_budget_pennies INTEGER
 );
+-- Unique per (name, parent); IFNULL keeps top-level names unique too.
+CREATE UNIQUE INDEX IF NOT EXISTS ux_categories_name_parent ON categories(name, IFNULL(parent, ''));
 
 -- ---------------------------------------------------------------------------
 -- Counterparties: first-class so "P T Wilson" / "PETER WILSON" / "Peter Wilson"
@@ -64,8 +70,8 @@ CREATE TABLE IF NOT EXISTS transactions (
                                             --   bank_credit|interest|fee|transfer|purchase|unknown
     status            TEXT NOT NULL DEFAULT 'posted'
                           CHECK (status IN ('posted', 'pending', 'declined')),
-    category          TEXT REFERENCES categories(name),
-    subcategory       TEXT REFERENCES categories(name),
+    category          TEXT,                 -- top-level category name (validated in-app)
+    subcategory       TEXT,                 -- leaf name, scoped to `category`
     source_category   TEXT,                 -- the bank's OWN label (Monzo `categories`), preserved as a signal
     is_transfer       INTEGER NOT NULL DEFAULT 0,   -- money between your own accounts; excluded from spend
     transfer_group    INTEGER REFERENCES transfer_groups(id),
@@ -111,8 +117,8 @@ CREATE TABLE IF NOT EXISTS merchant_rules (
     match_type  TEXT NOT NULL CHECK (match_type IN ('exact', 'contains', 'regex')),
     pattern     TEXT NOT NULL,
     merchant    TEXT,
-    category    TEXT REFERENCES categories(name),
-    subcategory TEXT REFERENCES categories(name),
+    category    TEXT,
+    subcategory TEXT,
     priority    INTEGER NOT NULL DEFAULT 100,
     origin      TEXT NOT NULL DEFAULT 'user'   -- 'seed' (reloadable) | 'user' (yours, preserved)
 );
@@ -120,8 +126,8 @@ CREATE TABLE IF NOT EXISTS merchant_rules (
 CREATE TABLE IF NOT EXISTS merchant_directory (
     raw_pattern TEXT PRIMARY KEY,
     merchant    TEXT,
-    category    TEXT REFERENCES categories(name),
-    subcategory TEXT REFERENCES categories(name),
+    category    TEXT,
+    subcategory TEXT,
     status      TEXT NOT NULL DEFAULT 'proposed'
                     CHECK (status IN ('proposed', 'approved', 'auto')),
     source      TEXT CHECK (source IN ('manual', 'inference', 'web')),
@@ -136,8 +142,8 @@ CREATE TABLE IF NOT EXISTS merchant_directory (
 CREATE TABLE IF NOT EXISTS category_map (
     account         TEXT NOT NULL,
     source_category TEXT NOT NULL,
-    category        TEXT REFERENCES categories(name),
-    subcategory     TEXT REFERENCES categories(name),
+    category        TEXT,
+    subcategory     TEXT,
     is_transfer     INTEGER NOT NULL DEFAULT 0,
     counts_as_spend INTEGER,
     PRIMARY KEY (account, source_category)
