@@ -1,7 +1,7 @@
 """Ledgerline CLI. All commands are idempotent and re-runnable.
 
     ledgerline init-db
-    ledgerline import <file> [<file> ...]
+    ledgerline import [--fresh] <file> [<file> ...]   # --fresh rebuilds from an empty DB
     ledgerline categorise
     ledgerline stats
 """
@@ -26,6 +26,9 @@ def cmd_init_db(args) -> None:
 
 
 def cmd_import(args) -> None:
+    if args.fresh and Path(args.db).exists():
+        Path(args.db).unlink()                      # start from an empty DB
+        print(f"Removed {args.db} — rebuilding fresh.")
     conn = db.connect(args.db)
     db.init_db(conn)
     seeding.seed(conn)
@@ -37,6 +40,9 @@ def cmd_import(args) -> None:
         db.log_import(conn, Path(f).name, source, counts)
         print(f"  {Path(f).name:<45} [{source}]  "
               f"seen={counts['seen']} new={counts['new']} dup={counts['dup']}")
+    result = categorise(conn)                        # apply the current rules/taxonomy right away
+    print(f"Categorise: transfers={result['transfers']} rules={result['rules']} "
+          f"source_map={result['source_map']} needs_review={result['needs_review']}")
 
 
 def cmd_categorise(args) -> None:
@@ -66,7 +72,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=DEFAULT_DB, help="SQLite path (default finance.db)")
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("init-db").set_defaults(func=cmd_init_db)
-    imp = sub.add_parser("import"); imp.add_argument("files", nargs="+"); imp.set_defaults(func=cmd_import)
+    imp = sub.add_parser("import", help="import files, then categorise")
+    imp.add_argument("files", nargs="+")
+    imp.add_argument("--fresh", action="store_true", help="delete the DB first and rebuild from scratch")
+    imp.set_defaults(func=cmd_import)
     sub.add_parser("categorise").set_defaults(func=cmd_categorise)
     sub.add_parser("stats").set_defaults(func=cmd_stats)
     srv = sub.add_parser("serve", help="run the local web app (browser)")
